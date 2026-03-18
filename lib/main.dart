@@ -1,27 +1,15 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
+import 'package:qr_code_generator/features/qr/domain/entities/qr_settings.dart';
+import 'package:qr_code_generator/features/qr/presentation/bloc/qr_bloc.dart';
 import 'package:qr_code_generator/theme.dart';
 import 'package:widgets_to_image/widgets_to_image.dart';
-import 'dart:convert';
-import 'dart:typed_data';
-
-final _bgColors = {
-  Colors.transparent: 'Прозорий',
-  Colors.black: 'Чорний',
-  Colors.white: 'Білий',
-};
-
-enum QrShapeStyle {
-  square,
-  circle,
-  smooth,
-}
 
 void main() {
   runApp(const MyApp());
@@ -30,19 +18,18 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    final brightness = View.of(context).platformDispatcher.platformBrightness;
-
-    // Retrieves the default theme for the platform
     TextTheme textTheme = Theme.of(context).textTheme;
 
     MaterialTheme theme = MaterialTheme(textTheme);
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: theme.light(),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+    return BlocProvider(
+      create: (_) => QrBloc(),
+      child: MaterialApp(
+        title: 'QR Code Generator',
+        theme: theme.light(),
+        home: const MyHomePage(title: 'QR Code Generator'),
+      ),
     );
   }
 }
@@ -57,22 +44,8 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  late final ValueNotifier<QrShapeStyle> _qrShapeStyle =
-      ValueNotifier<QrShapeStyle>(QrShapeStyle.square);
-  late final ValueNotifier<Color> _color = ValueNotifier<Color>(Colors.black);
-  late final ValueNotifier<Color> _bgColor = ValueNotifier<Color>(
-    Colors.transparent,
-  );
-  late final ValueNotifier<String?> _embeddedImagePath = ValueNotifier<String?>(
-    null,
-  );
-
-  late final ValueNotifier<String?> _qrDataNotifier = ValueNotifier<String?>(
-    null,
-  );
+  late final _qrBloc = context.read<QrBloc>();
   late final TextEditingController _qrDataController = TextEditingController();
-  Timer? _debounce;
-
   late final WidgetsToImageController _widgetToImageController =
       WidgetsToImageController();
 
@@ -81,27 +54,14 @@ class _MyHomePageState extends State<MyHomePage> {
     super.initState();
 
     _qrDataController.addListener(() {
-      if (_debounce?.isActive ?? false) _debounce!.cancel();
-
-      _debounce = Timer(const Duration(milliseconds: 300), () {
-        String? newQrData = _qrDataController.text.trim();
-        newQrData = newQrData.isEmpty ? null : newQrData;
-
-        if (_qrDataNotifier.value != newQrData) {
-          _qrDataNotifier.value = newQrData;
-        }
-      });
+      debugPrint('text listener: ${_qrDataController.text}');
+      _qrBloc.add(QrDataChanged(_qrDataController.text));
     });
+    debugPrint('initState: ${_qrBloc.state.settings.data}');
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _qrDataNotifier.dispose();
-    _qrShapeStyle.dispose();
-    _color.dispose();
-    _bgColor.dispose();
-    _embeddedImagePath.dispose();
     _qrDataController.dispose();
     _widgetToImageController.dispose();
     super.dispose();
@@ -114,9 +74,11 @@ class _MyHomePageState extends State<MyHomePage> {
         thumbVisibility: true,
         trackVisibility: true,
         child: SingleChildScrollView(
-          padding: EdgeInsets.all(16).add(EdgeInsets.only(
-            bottom: 80,
-          )),
+          padding: EdgeInsets.all(16).add(
+            EdgeInsets.only(
+              bottom: 80,
+            ),
+          ),
           child: Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(
@@ -135,61 +97,51 @@ class _MyHomePageState extends State<MyHomePage> {
                         constraints: BoxConstraints(
                           maxHeight: 300,
                           maxWidth: 300,
-                          minHeight: 50,
-                          minWidth: 50,
+                          minHeight: 150,
+                          minWidth: 150,
                         ),
-                        child: ValueListenableBuilder<String?>(
-                          valueListenable: _qrDataNotifier,
-                          builder: (context, qrData, child) {
-                            if (qrData == null) return Placeholder();
+                        child: BlocBuilder<QrBloc, QrState>(
+                          builder: (context, state) {
+                            final settings = state.settings;
+                            final qrData = settings.data;
+                            if (qrData == null) {
+                              return const Placeholder();
+                            }
 
-                            return ValueListenableBuilder<QrShapeStyle>(
-                              valueListenable: _qrShapeStyle,
-                              builder: (context, shape, _) {
-                                return ValueListenableBuilder<Color>(
-                                  valueListenable: _color,
-                                  builder: (context, color, _) {
-                                    return ValueListenableBuilder<Color>(
-                                      valueListenable: _bgColor,
-                                      builder: (context, bgColor, _) {
-                                        return ValueListenableBuilder<String?>(
-                                          valueListenable: _embeddedImagePath,
-                                          builder: (context, embedded, _) {
-                                            return PrettyQrView.data(
-                                              data: qrData,
-                                              decoration: PrettyQrDecoration(
-                                                image: embedded == null
-                                                    ? null
-                                                    : PrettyQrDecorationImage(
-                                                        image: NetworkImage(
-                                                          embedded,
-                                                        ),
-                                                      ),
-                                                background: bgColor,
-                                                shape: switch (shape) {
-                                                  QrShapeStyle.square =>
-                                                    PrettyQrSquaresSymbol(
-                                                      color: color,
-                                                    ),
-                                                  QrShapeStyle.circle =>
-                                                    PrettyQrDotsSymbol(
-                                                      color: color,
-                                                    ),
-                                                  QrShapeStyle.smooth =>
-                                                    PrettyQrSmoothSymbol(
-                                                      color: color,
-                                                    ),
-                                                },
-                                                quietZone: .pixels(16),
-                                              ),
-                                            );
-                                          },
-                                        );
-                                      },
-                                    );
-                                  },
-                                );
-                              },
+                            final imageProvider =
+                                settings.embeddedImagePath == null
+                                ? null
+                                : (kIsWeb
+                                      ? NetworkImage(
+                                          settings.embeddedImagePath!,
+                                        )
+                                      : FileImage(
+                                              File(settings.embeddedImagePath!),
+                                            )
+                                            as ImageProvider);
+
+                            return PrettyQrView.data(
+                              data: qrData,
+                              decoration: PrettyQrDecoration(
+                                image: imageProvider == null
+                                    ? null
+                                    : PrettyQrDecorationImage(
+                                        image: imageProvider,
+                                      ),
+                                background: settings.backgroundColor,
+                                shape: switch (settings.shapeStyle) {
+                                  QrShapeStyle.square => PrettyQrSquaresSymbol(
+                                    color: settings.color,
+                                  ),
+                                  QrShapeStyle.circle => PrettyQrDotsSymbol(
+                                    color: settings.color,
+                                  ),
+                                  QrShapeStyle.smooth => PrettyQrSmoothSymbol(
+                                    color: settings.color,
+                                  ),
+                                },
+                                quietZone: const PrettyQrQuietZone.pixels(16),
+                              ),
                             );
                           },
                         ),
@@ -205,11 +157,14 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   _Setting(
                     name: 'Стиль QR коду',
-                    child: ValueListenableBuilder<QrShapeStyle>(
-                      valueListenable: _qrShapeStyle,
-                      builder: (context, value, _) {
+                    child: BlocBuilder<QrBloc, QrState>(
+                      buildWhen: (previous, current) =>
+                          previous.settings.shapeStyle !=
+                          current.settings.shapeStyle,
+                      builder: (context, state) {
+                        final selected = state.settings.shapeStyle;
                         return _SegmentedButton<QrShapeStyle>(
-                          segments: [
+                          segments: const [
                             ButtonSegment(
                               value: QrShapeStyle.square,
                               label: Text('Квадрат'),
@@ -223,9 +178,11 @@ class _MyHomePageState extends State<MyHomePage> {
                               label: Text('Плавний'),
                             ),
                           ],
-                          selected: {value},
+                          selected: {selected},
                           onSelectionChanged: (selection) {
-                            _qrShapeStyle.value = selection.single;
+                            context.read<QrBloc>().add(
+                              QrShapeChanged(selection.single),
+                            );
                           },
                         );
                       },
@@ -233,11 +190,13 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   _Setting(
                     name: 'Колір',
-                    child: ValueListenableBuilder<Color>(
-                      valueListenable: _color,
-                      builder: (context, value, _) {
+                    child: BlocBuilder<QrBloc, QrState>(
+                      buildWhen: (previous, current) =>
+                          previous.settings.color != current.settings.color,
+                      builder: (context, state) {
+                        final selected = state.settings.color;
                         return _SegmentedButton<Color>(
-                          segments: [
+                          segments: const [
                             ButtonSegment(
                               value: Colors.black,
                               label: Text('Чорний'),
@@ -249,9 +208,11 @@ class _MyHomePageState extends State<MyHomePage> {
                               icon: _ColorPreview(color: Colors.white),
                             ),
                           ],
-                          selected: {value},
+                          selected: {selected},
                           onSelectionChanged: (selection) {
-                            _color.value = selection.single;
+                            context.read<QrBloc>().add(
+                              QrColorChanged(selection.single),
+                            );
                           },
                         );
                       },
@@ -259,20 +220,30 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   _Setting(
                     name: 'Фоновий колір',
-                    child: ValueListenableBuilder<Color>(
-                      valueListenable: _bgColor,
-                      builder: (context, value, _) {
+                    child: BlocBuilder<QrBloc, QrState>(
+                      buildWhen: (previous, current) =>
+                          previous.settings.backgroundColor !=
+                          current.settings.backgroundColor,
+                      builder: (context, state) {
+                        final selected = state.settings.backgroundColor;
+                        final bgColors = {
+                          Colors.transparent: 'Прозорий',
+                          Colors.black: 'Чорний',
+                          Colors.white: 'Білий',
+                        };
                         return _SegmentedButton<Color>(
-                          segments: _bgColors.entries.map((entry) {
+                          segments: bgColors.entries.map((entry) {
                             return ButtonSegment(
                               value: entry.key,
                               label: Text(entry.value),
                               icon: _ColorPreview(color: entry.key),
                             );
                           }).toList(),
-                          selected: {value},
+                          selected: {selected},
                           onSelectionChanged: (selection) {
-                            _bgColor.value = selection.single;
+                            context.read<QrBloc>().add(
+                              QrBackgroundColorChanged(selection.single),
+                            );
                           },
                         );
                       },
@@ -280,11 +251,16 @@ class _MyHomePageState extends State<MyHomePage> {
                   ),
                   _Setting(
                     name: 'Зображення',
-                    child: ValueListenableBuilder<String?>(
-                      valueListenable: _embeddedImagePath,
-                      builder: (context, embedded, _) {
+                    child: BlocBuilder<QrBloc, QrState>(
+                      buildWhen: (previous, current) =>
+                          previous.settings.embeddedImagePath !=
+                          current.settings.embeddedImagePath,
+                      builder: (context, state) {
+                        final embedded = state.settings.embeddedImagePath;
                         return OutlinedButton.icon(
-                          iconAlignment: embedded == null ? .start : .end,
+                          iconAlignment: embedded == null
+                              ? IconAlignment.start
+                              : IconAlignment.end,
                           style: embedded == null
                               ? null
                               : OutlinedButton.styleFrom(
@@ -293,7 +269,9 @@ class _MyHomePageState extends State<MyHomePage> {
                                 ),
                           onPressed: () async {
                             if (embedded != null) {
-                              _embeddedImagePath.value = null;
+                              context.read<QrBloc>().add(
+                                const QrEmbeddedImageChanged(null),
+                              );
                               return;
                             }
 
@@ -302,7 +280,9 @@ class _MyHomePageState extends State<MyHomePage> {
                               source: ImageSource.gallery,
                             );
 
-                            _embeddedImagePath.value = image?.path;
+                            context.read<QrBloc>().add(
+                              QrEmbeddedImageChanged(image?.path),
+                            );
                           },
                           label: Text(
                             embedded == null ? 'Вибрати' : 'Видалити',
@@ -329,38 +309,34 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       ],
       floatingActionButtonLocation: .miniCenterDocked,
-      floatingActionButton: ValueListenableBuilder<String?>(
-        valueListenable: _qrDataNotifier,
-        builder: (context, qrData, child) {
-          return qrData == null
-              ? SizedBox.shrink()
-              : FloatingActionButton.extended(
-                  onPressed: () async {
-                    final pngBytes = await _widgetToImageController.capturePng(
-                      pixelRatio: 3.0,
-                      waitForAnimations: false,
-                      delayMs: 300,
-                    );
+      floatingActionButton: BlocBuilder<QrBloc, QrState>(
+        buildWhen: (previous, current) =>
+            previous.settings.data != current.settings.data,
+        builder: (context, state) {
+          final hasData = state.settings.data != null;
+          if (!hasData) return const SizedBox.shrink();
 
-                    if (pngBytes == null) {
-                      return;
-                    }
+          return FloatingActionButton.extended(
+            onPressed: () async {
+              final pngBytes = await _widgetToImageController.capturePng(
+                pixelRatio: 3.0,
+                waitForAnimations: false,
+                delayMs: 300,
+              );
 
-                    final String? outputFile = await FilePicker.platform
-                        .saveFile(
-                          fileName: 'qr-code.png',
-                          bytes: pngBytes,
-                          type: FileType.image,
-                          allowedExtensions: ['png'],
-                        );
+              if (pngBytes == null) {
+                return;
+              }
 
-                    if (outputFile == null) {
-                      // User canceled the picker
-                      return;
-                    }
-                  },
-                  label: Text('Завантажити QR код'),
-                );
+              await FilePicker.platform.saveFile(
+                fileName: 'qr-code.png',
+                bytes: pngBytes,
+                type: FileType.image,
+                allowedExtensions: ['png'],
+              );
+            },
+            label: const Text('Завантажити QR код'),
+          );
         },
       ),
     );
@@ -369,7 +345,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
 class _ColorPreview extends StatelessWidget {
   const _ColorPreview({
-    super.key,
     required this.color,
   });
   final Color color;
@@ -417,7 +392,7 @@ class _Setting extends StatelessWidget {
 class _SegmentedButton<T> extends SegmentedButton<T> {
   const _SegmentedButton({
     super.key,
-    required List<ButtonSegment<T>> super.segments,
+    required super.segments,
     required super.selected,
     super.onSelectionChanged,
     super.emptySelectionAllowed = false,
