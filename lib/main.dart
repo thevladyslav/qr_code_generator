@@ -54,7 +54,6 @@ class _MyHomePageState extends State<MyHomePage> {
     super.initState();
 
     _qrDataController.addListener(() {
-      debugPrint('text listener: ${_qrDataController.text}');
       _qrBloc.add(QrDataChanged(_qrDataController.text));
     });
     debugPrint('initState: ${_qrBloc.state.settings.data}');
@@ -345,6 +344,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
 class _ColorPreview extends StatelessWidget {
   const _ColorPreview({
+    super.key,
     required this.color,
   });
   final Color color;
@@ -392,7 +392,7 @@ class _Setting extends StatelessWidget {
 class _SegmentedButton<T> extends SegmentedButton<T> {
   const _SegmentedButton({
     super.key,
-    required super.segments,
+    required List<ButtonSegment<T>> super.segments,
     required super.selected,
     super.onSelectionChanged,
     super.emptySelectionAllowed = false,
